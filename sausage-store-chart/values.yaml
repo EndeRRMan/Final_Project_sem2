@@ -1,5 +1,6 @@
 global:
   imagePullPolicy: Always
+  postgresqlSecretName: postgresql-credentials
   ###vault:
   ###  host: ip
   ###  name: vault
@@ -36,8 +37,6 @@ backend:
     scrape: "true"
   env:
     postgresUri: jdbc:postgresql://postgresql:5432/sausage-store
-    postgresUser: store
-    postgresPassword: storepassword
     reportPath: /logs/reports
     logPath: /logs
   service:
@@ -70,7 +69,25 @@ backend-report:
 
 infra:
   postgresql:
-  ### Опишите необходимые переменные для развертывания PostgresQL в кластере Kubernetes
+    enabled: true
+    image: postgres:14.20-alpine
+    auth:
+      database: sausage-store
+      username: store
+      # Default: provision global.postgresqlSecretName externally.
+      createSecret: false
+      password: ""
+    persistence:
+      size: 1Gi
+      # Empty means use the cluster default StorageClass.
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
   mongodb:
     env:
       MONGO_INITDB_ROOT_USERNAME: root

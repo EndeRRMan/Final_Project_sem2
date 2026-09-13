@@ -41,14 +41,14 @@ spec:
                   key: postgres_uri
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-{{ .Chart.Name }}-conf
-                  key: postgres_user
+                secretKeyRef:
+                  name: {{ .Values.global.postgresqlSecretName | quote }}
+                  key: username
             - name: SPRING_DATASOURCE_PASSWORD
               valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-{{ .Chart.Name }}-conf
-                  key: postgres_password
+                secretKeyRef:
+                  name: {{ .Values.global.postgresqlSecretName | quote }}
+                  key: password
             - name: REPORT_PATH
               valueFrom:
                 configMapKeyRef:
@@ -73,14 +73,11 @@ spec:
           items:
             - key: postgres_uri
               path: postgres_uri
-            - key: postgres_user
-              path: postgres_user
-            - key: postgres_password
-              path: postgres_password
             - key: report_path
               path: report_path
             - key: log_path
               path: log_path
+{{- if .Values.vpa }}
 ---
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
@@ -94,4 +91,5 @@ spec:
   updatePolicy:
 {{ toYaml .Values.vpa.updatePolicy | indent 4 }} 
   resourcePolicy:
-{{ toYaml .Values.vpa.resourcePolicy | indent 4 }} 
+{{ toYaml .Values.vpa.resourcePolicy | indent 4 }}
+{{- end }}

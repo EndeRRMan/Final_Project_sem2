@@ -194,7 +194,7 @@
                 <configuration>
                     <user>${env.PSQL_USER}</user>
                     <password>${env.PSQL_PASSWORD}</password>
-                    <url>jdbc:postgresql://${env.PSQL_HOST}:${env.PSQL_PORT};database=${env.PSQL_DBNAME}</url>
+                    <url>jdbc:postgresql://${env.PSQL_HOST}:${env.PSQL_PORT}/${env.PSQL_DBNAME}</url>
                     <connectRetries>4</connectRetries>
                     <locations>
                         <location>classpath:db/migration</location>
