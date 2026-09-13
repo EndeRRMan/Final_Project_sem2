@@ -4,7 +4,7 @@
 # build
 FROM maven:3.8.2-openjdk-16-slim as builder
 # задаём переменную VERSION, которая будет использоваться для сборки проекта
-ARG VERSION=${VERSION}
+ARG VERSION=0.0.1-SNAPSHOT
 WORKDIR /usr/src/app
 COPY ./src ./src
 COPY *.xml ./
@@ -12,13 +12,13 @@ COPY *.xml ./
 RUN mvn package -Dversion.application=${VERSION}
 
 # release
-FROM openjdk:16-jdk-alpine
-ARG VERSION=${VERSION}
+FROM eclipse-temurin:17.0.18_8-jre-alpine
+ARG VERSION=0.0.1-SNAPSHOT
 WORKDIR /app
 # создаём пользователя jaruser
 RUN addgroup --system jaruser \
     && adduser -S -s /bin/false -G jaruser jaruser -D -H \
-    && apk add --no-cache dumb-init==1.2.5-r0 \
+    && apk add --no-cache dumb-init==1.2.5-r3 \
     && apk add --update curl \
     && rm -rf /var/cache/apk/* \
     && mkdir -p /logs/reports \
