@@ -11,7 +11,7 @@ Provision Secrets externally in the release namespace before deployment:
 
 | values key | Default Secret | Required keys |
 | --- | --- | --- |
-| global.postgresqlSecretName | postgresql-credentials | username, password |
+| global.postgresqlSecretName | postgresql-credentials | database, username, password |
 | global.mongodbSecretName | mongodb-credentials | username, password, uri |
 
 PostgreSQL database defaults to sausage-store. MongoDB username/password initialize
@@ -56,6 +56,8 @@ front-dani.2sem.students-projects.ru and the existing TLS Secret
 Backend uses RollingUpdate with maxUnavailable=0 and maxSurge=1.
 Unused Spring Cloud Vault auto-configuration is disabled through
 backend.env.vaultEnabled=false because credentials come from Kubernetes Secrets.
+backend.env.hibernateDdlAuto=validate checks the migrated PostgreSQL schema at
+startup without creating or modifying application tables through Hibernate.
 Liveness checks /actuator/health:8080 after 60 seconds, every 10 seconds,
 with timeout 3 seconds and failureThreshold 3. VPA targets the backend Deployment
 using autoscaling.k8s.io/v1 and updateMode Off. Other VPA modes are rejected.
@@ -80,8 +82,10 @@ The report CPU request enables HPA utilization calculation.
 | Namespace quota | 10 | 5 | 4 / 5Gi | 2000m | 1000Mi | 3000m | 2500Mi |
 
 There are 3 application ConfigMaps and 2 external database Secrets.
-Including the existing system resources gives 4 ConfigMaps and 4 Secrets,
-below quotas of 10 each. The TLS Secret is already among the system Secrets.
+Including the existing system resources gives 4 ConfigMaps and 4 database/system
+Secrets. Helm additionally stores release revisions as Secrets. CI limits history
+to 3 revisions, keeping the planned total at 7 Secrets (8 during an update),
+below the quota of 10. The TLS Secret is already among the system Secrets.
 The maximum planned rollout leaves 168Mi of memory request headroom.
 The calculation covers desired HPA replicas plus the configured backend surge;
 terminating Pods awaiting deletion can briefly retain quota, so a rollout may
@@ -95,3 +99,45 @@ Default rendering does not require credentials. Validate the rendered manifests
 against Kubernetes schemas or use kubectl apply --dry-run=client; neither command
 deploys the application. VPA requires the installed autoscaling.k8s.io/v1 CRD,
 and HPA requires the CPU metrics API when actually deployed.
+
+## Production CI/CD
+
+Production URL: https://front-dani.2sem.students-projects.ru
+
+Namespace: r-devops-magistracy-project-2sem-856756022
+
+The [deploy workflow](../.github/workflows/deploy.yaml) runs on pushes to main
+and can also be started with workflow_dispatch. A shared concurrency group
+prevents simultaneous production pipelines.
+
+1. build_and_push_to_docker_hub builds and publishes all three images with the
+   immutable source tag GITHUB_SHA:
+   DOCKERHUB_USERNAME/sausage-backend:GITHUB_SHA,
+   DOCKERHUB_USERNAME/sausage-frontend:GITHUB_SHA and
+   DOCKERHUB_USERNAME/sausage-backend-report:GITHUB_SHA.
+   Backend VERSION is also set to GITHUB_SHA.
+2. add_helm_chart_to_nexus validates the local subcharts, runs strict lint and
+   template checks, then packages chart version 0.RUN_NUMBER.RUN_ATTEMPT with
+   appVersion GITHUB_SHA. The unique package is uploaded with HTTP Basic Auth
+   to the hosted Nexus Helm repository dani-sausage-store:
+   https://nexus.cloud-services-engineer.education-services.ru/repository/dani-sausage-store/
+3. deploy_helm_chart_to_kubernetes writes the raw YAML KUBE_CONFIG to a private
+   runner temporary file, checks namespace access and the existing TLS Secret,
+   and creates or updates the two external database Secrets. It builds the
+   MongoDB URI with URL-encoded credentials and authSource=admin.
+   Helm refreshes the authenticated nexus repository, checks the exact chart
+   version, and deploys nexus/sausage-store with SHA images, --wait,
+   --timeout 10m and --history-max 3. It retains failed deployment resources
+   for diagnosis.
+
+All credential values are supplied by GitHub Actions Secrets:
+DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, KUBE_CONFIG, POSTGRES_PASSWORD,
+MONGODB_PASSWORD, NEXUS_HELM_REPO, NEXUS_HELM_REPO_USER and
+NEXUS_HELM_REPO_PASSWORD. They are absent from chart values and repository files.
+Temporary credential files and runner kubeconfig are removed after use.
+Database passwords must continue to match persisted databases on later runs.
+
+Post-deployment checks verify all five rollouts, backend health UP, MongoDB
+authentication, backend-report health, successful Flyway V001-V004 history,
+Running/Ready Pods with SHA images, HTTPS and six products from /api/products.
+Failure diagnostics include Helm status, Events and filtered container logs.
