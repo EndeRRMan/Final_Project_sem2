@@ -38,6 +38,7 @@ backend:
   env:
     postgresUri: jdbc:postgresql://postgresql:5432/sausage-store
     vaultEnabled: false
+    hibernateDdlAuto: validate
     reportPath: /logs/reports
     logPath: /logs
   containerPort: 8080

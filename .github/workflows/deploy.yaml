@@ -2,81 +2,196 @@ name: Sausage Store Deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sausage-store-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 env:
-  NEXUS_HELM_REPO: ${{ secrets.NEXUS_HELM_REPO }}
-  NEXUS_HELM_REPO_USER: ${{ secrets.NEXUS_HELM_REPO_USER }}
-  NEXUS_HELM_REPO_PASSWORD: ${{ secrets.NEXUS_HELM_REPO_PASSWORD }}
-  SAUSAGE_STORE_NAMESPACE: YOUR_NAMESPACE
-  KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-  VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+  SAUSAGE_STORE_NAMESPACE: r-devops-magistracy-project-2sem-856756022
+  PRODUCTION_URL: https://front-dani.2sem.students-projects.ru
+  CHART_VERSION: 0.${{ github.run_number }}.${{ github.run_attempt }}
 
 jobs:
-  # Сборка и пуш образов в докерхаб:
   build_and_push_to_docker_hub:
-      name: Push Docker image to DockerHub
-      runs-on: ubuntu-latest
-      steps:
-        - name: Check out the repo
-          # Получение исходного кода из репозитория:
-          uses: actions/checkout@v3
-        - name: Set up Docker Buildx
-          # Установка сборщика контейнеров Docker:
-          uses: docker/setup-buildx-action@v2
-        - name: Login to Docker 
-          # Авторизация на Docker Hub:
-          uses: docker/login-action@v2
-          # При помощи with передаём в action параметры username и password:
-          with:
-            username: ${{ secrets.DOCKER_USER }}
-            password: ${{ secrets.DOCKER_PASSWORD }}
-            # Хорошо ли держать логин и пароль прямо в коде workflow?
-            # Нет, это нехорошо. Хранить пароль надо в Secrets.
-        - name: Push Backend to DockerHub
-          # Одновременный билд и пуш образа в Docker Hub:
-          uses: docker/build-push-action@v4
-          with:
-            # Параметр context: ./backend/ указывает, что нужный Dockerfile 
-            # находится в ./backend/
-            context: ./backend/
-            # Параметр push: true указывает, что образ нужно не только собрать,
-            # но и отправить на Docker Hub:
-            push: true
-            # В параметре tags задаётся название и тег для образа.
-            # Для каждого пересобранного образа 
-            # устанавливаем тег latest, чтобы потом
-            # на сервере и в docker-compose.yml не указывать версию образа:
-            tags: YOUR_DOCKERHUB/sausage-backend:latest
-            build-args: |
-              VERSION=${{ github.sha }}
-        - name: Push Frontend to DockerHub
-          uses: docker/build-push-action@v4
-          with:
-            context: ./frontend/
-            push: true
-            tags: YOUR_DOCKERHUB/sausage-frontend:latest
-        - name: Push Backend-report to DockerHub
-          uses: docker/build-push-action@v4
-          with:
-            context: ./backend-report/
-            push: true
-            tags: YOUR_DOCKERHUB/sausage-backend-report:latest
-  # Упаковываем helm-чарт и пушим его в Nexus
+    name: Build and push application images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4.3.0
+      - uses: docker/login-action@v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push backend
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: ./backend
+          push: true
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/sausage-backend:${{ github.sha }}
+          build-args: |
+            VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build and push frontend
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: ./frontend
+          push: true
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/sausage-frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+      - name: Build and push backend-report
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: ./backend-report
+          push: true
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/sausage-backend-report:${{ github.sha }}
+          cache-from: type=gha,scope=backend-report
+          cache-to: type=gha,mode=max,scope=backend-report
+
   add_helm_chart_to_nexus:
-      name: Add Helm Chart To Nexus
-      runs-on: ubuntu-latest
-      needs: build_and_push_to_docker_hub
+    name: Package and publish Helm chart
+    needs: build_and_push_to_docker_hub
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      chart_version: ${{ steps.package.outputs.chart_version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Helm
+        run: bash .github/scripts/install-tools.sh helm
+      - name: Validate Helm chart
+        run: |
+          set -euo pipefail
+          helm dependency build sausage-store-chart
+          helm lint sausage-store-chart --strict
+          helm template sausage-store sausage-store-chart \
+            --namespace "$SAUSAGE_STORE_NAMESPACE" > "$RUNNER_TEMP/rendered.yaml"
+      - name: Package chart
+        id: package
+        run: |
+          set -euo pipefail
+          helm package sausage-store-chart \
+            --version "$CHART_VERSION" --app-version "$GITHUB_SHA" \
+            --destination "$RUNNER_TEMP"
+          printf 'chart_version=%s\n' "$CHART_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload chart to Nexus
+        env:
+          NEXUS_HELM_REPO: ${{ secrets.NEXUS_HELM_REPO }}
+          NEXUS_HELM_REPO_USER: ${{ secrets.NEXUS_HELM_REPO_USER }}
+          NEXUS_HELM_REPO_PASSWORD: ${{ secrets.NEXUS_HELM_REPO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$NEXUS_HELM_REPO"
+          test -n "$NEXUS_HELM_REPO_USER"
+          test -n "$NEXUS_HELM_REPO_PASSWORD"
+          chart_package="$RUNNER_TEMP/sausage-store-$CHART_VERSION.tgz"
+          nexus_url="$(printf '%s' "$NEXUS_HELM_REPO" | sed 's:/*$::')"
+          curl --fail --silent --show-error --connect-timeout 15 --max-time 120 \
+            --user "$NEXUS_HELM_REPO_USER:$NEXUS_HELM_REPO_PASSWORD" \
+            --upload-file "$chart_package" "$nexus_url/"
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 \
+            --user "$NEXUS_HELM_REPO_USER:$NEXUS_HELM_REPO_PASSWORD" \
+            --output "$RUNNER_TEMP/nexus-index.yaml" "$nexus_url/index.yaml"
 
-      steps:
-      #### Опишите необходимые шаги
-
-  # Деплоим приложения в кластер Kubernetes с помощью helm-чарт
   deploy_helm_chart_to_kubernetes:
-      name: Deploy Helm Chart To Kubernetes
-      runs-on: ubuntu-latest
-      needs: add_helm_chart_to_nexus
-
-      steps:
-      #### Опишите необходимые шаги
+    name: Deploy and verify production
+    needs: add_helm_chart_to_nexus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CHART_VERSION: ${{ needs.add_helm_chart_to_nexus.outputs.chart_version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Helm and kubectl
+        run: bash .github/scripts/install-tools.sh helm kubectl
+      - name: Configure Kubernetes access
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "$KUBE_CONFIG"
+          export KUBECONFIG="$RUNNER_TEMP/sausage-kubeconfig"
+          printf 'KUBECONFIG=%s\n' "$KUBECONFIG" >> "$GITHUB_ENV"
+          umask 077
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          kubectl get namespace "$SAUSAGE_STORE_NAMESPACE"
+          kubectl auth can-i get pods --namespace "$SAUSAGE_STORE_NAMESPACE"
+          kubectl get pods --namespace "$SAUSAGE_STORE_NAMESPACE"
+          kubectl get secret 2sem-students-projects-wildcard-secret \
+            --namespace "$SAUSAGE_STORE_NAMESPACE" -o name
+      - name: Create or update database Secrets
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          MONGODB_PASSWORD: ${{ secrets.MONGODB_PASSWORD }}
+        run: bash .github/scripts/create-database-secrets.sh
+      - name: Install exact Nexus chart version
+        env:
+          NEXUS_HELM_REPO: ${{ secrets.NEXUS_HELM_REPO }}
+          NEXUS_HELM_REPO_USER: ${{ secrets.NEXUS_HELM_REPO_USER }}
+          NEXUS_HELM_REPO_PASSWORD: ${{ secrets.NEXUS_HELM_REPO_PASSWORD }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          helm repo add nexus "$NEXUS_HELM_REPO" \
+            --username "$NEXUS_HELM_REPO_USER" --password "$NEXUS_HELM_REPO_PASSWORD"
+          helm repo update nexus
+          helm show chart nexus/sausage-store --version "$CHART_VERSION"
+          helm upgrade --install sausage-store nexus/sausage-store \
+            --version "$CHART_VERSION" --namespace "$SAUSAGE_STORE_NAMESPACE" \
+            --set-string "backend.image=$DOCKERHUB_USERNAME/sausage-backend:$GITHUB_SHA" \
+            --set-string "frontend.image=$DOCKERHUB_USERNAME/sausage-frontend:$GITHUB_SHA" \
+            --set-string "backend-report.image=$DOCKERHUB_USERNAME/sausage-backend-report:$GITHUB_SHA" \
+            --wait --timeout 10m --history-max 3
+      - name: Verify production deployment and HTTPS
+        run: bash .github/scripts/verify-deployment.sh
+      - name: Diagnose failed deployment
+        if: failure()
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          MONGODB_PASSWORD: ${{ secrets.MONGODB_PASSWORD }}
+        run: |
+          set +e
+          helm status sausage-store --namespace "$SAUSAGE_STORE_NAMESPACE"
+          kubectl get pods,deployments,statefulsets,svc,pvc,ingress,hpa,vpa \
+            --namespace "$SAUSAGE_STORE_NAMESPACE" -o wide
+          kubectl describe pods --namespace "$SAUSAGE_STORE_NAMESPACE" \
+            | python3 .github/scripts/redact-logs.py
+          kubectl get events --namespace "$SAUSAGE_STORE_NAMESPACE" --sort-by=.lastTimestamp
+          for component in backend frontend; do
+            kubectl logs "deployment/sausage-store-$component" \
+              --namespace "$SAUSAGE_STORE_NAMESPACE" --all-containers=true --tail=150 \
+              | python3 .github/scripts/redact-logs.py
+          done
+          kubectl logs deployment/sausage-store-backend-report \
+            --namespace "$SAUSAGE_STORE_NAMESPACE" --all-containers=true --tail=150 \
+            | python3 .github/scripts/redact-logs.py
+          for database in postgresql mongodb; do
+            kubectl logs "statefulset/$database" \
+              --namespace "$SAUSAGE_STORE_NAMESPACE" --all-containers=true --tail=100 \
+              | python3 .github/scripts/redact-logs.py
+          done
+      - name: Remove runner kubeconfig
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sausage-kubeconfig"

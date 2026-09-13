@@ -34,6 +34,8 @@ spec:
           image: {{ .Values.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
+            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+              value: {{ .Values.env.hibernateDdlAuto | quote }}
             - name: SPRING_CLOUD_VAULT_ENABLED
               value: {{ .Values.env.vaultEnabled | quote }}
             - name: SPRING_DATASOURCE_URL
