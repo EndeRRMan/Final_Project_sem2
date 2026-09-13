@@ -5,4 +5,4 @@ name: backend
 description: backend Helm Chart
 
 version: 0.1.0
-appVersion: "latest"
+appVersion: "0.1.0"

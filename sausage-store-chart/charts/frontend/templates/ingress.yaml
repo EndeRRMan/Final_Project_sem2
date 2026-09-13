@@ -4,10 +4,11 @@ kind: Ingress
 metadata:
   name: {{ .Release.Name }}-{{ .Chart.Name }}-ingress
 spec:
-  ingressClassName: "nginx"
+  ingressClassName: {{ .Values.ingress.className | quote }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tlsSecretName | quote }}
   rules:
     - host: {{ .Values.ingress.host }}
       http:

@@ -5,10 +5,12 @@ name: sausage-store
 description: Sausage Store Helm Chart
 
 version: 0.1.0
-appVersion: "latest"
+appVersion: "0.1.0"
 
 dependencies:
   - name: backend
+    version: 0.1.0
+  - name: backend-report
     version: 0.1.0
   - name: frontend
     version: 0.1.0

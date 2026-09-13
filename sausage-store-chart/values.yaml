@@ -1,72 +1,92 @@
+# Override application image repositories and tags with published images before deployment.
+# Database Secrets are external by default; no database passwords are provided here.
 global:
-  imagePullPolicy: Always
+  imagePullPolicy: IfNotPresent
   postgresqlSecretName: postgresql-credentials
-  ###vault:
-  ###  host: ip
-  ###  name: vault
-  ###  vaultToken: someToken
-
-
+  mongodbSecretName: mongodb-credentials
 frontend:
-### В чарте frontend отсутствуют некоторые важные файлы. Поймите какие и опишите их.
+  image: sausage-frontend:0.1.0
   replicas: 1
-  revisionHistoryLimit: 15
+  revisionHistoryLimit: 3
   strategy:
     type: Recreate
+  containerPort: 80
   service:
     port: 80
   ingress:
-    host: YOUR_STUDENT_HOSTNAME.students-projects.ru # Корректный домен будет указан в задании
+    className: nginx
+    host: front-dani.2sem.students-projects.ru
+    tlsSecretName: 2sem-students-projects-wildcard-secret
     path: /
     pathType: Prefix
-  containerPort: 80
-  image: YOUR_DOCKERHUB/sausage-frontend:latest
   resources:
     requests:
-      memory: "128Mi"
-      cpu: "100m"
+      cpu: 50m
+      memory: 64Mi
     limits:
-      memory: "128Mi"
-      cpu: "1"
+      cpu: 250m
+      memory: 128Mi
   nginxConf: nginx.conf
-
 backend:
+  image: sausage-backend:0.1.0
+  replicas: 1
+  revisionHistoryLimit: 3
   annotations:
     path: /actuator/prometheus
-    port: "8080"
-    scrape: "true"
+    port: '8080'
+    scrape: 'true'
   env:
     postgresUri: jdbc:postgresql://postgresql:5432/sausage-store
+    vaultEnabled: false
     reportPath: /logs/reports
     logPath: /logs
+  containerPort: 8080
   service:
     port: 8080
-  revisionHistoryLimit: 15
-  replicas: 1
   strategy:
-  ### Опишите стратегию RollingUpdate для бэкенда
-  image: YOUR_DOCKERHUB/sausage-backend:latest
-  imagePullPolicy: Always
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   resources:
     requests:
-      memory: "256Mi"
-      cpu: "100m"
+      cpu: 100m
+      memory: 192Mi
     limits:
-      memory: "512Mi"
-      cpu: "1"
-  containerPort: 8080
+      cpu: 600m
+      memory: 512Mi
   livenessProbe:
-  ### Опишите LivenessProbe для бэкенда
+    httpGet:
+      path: /actuator/health
+      port: 8080
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
   vpa:
-  ### Опишите VPA для бэкенда
-
+    enabled: true
+    updateMode: 'Off'
 backend-report:
-### Опишите значения для backend-report
-### Приложение должно использовать стратегию Recreate
-### Приложение использует переменную PORT - порт, на котором оно запустится и DB - Uri-подключение к mongodb. 
-### DB положите в Secret, PORT в ConfigMap
-### Опишите HPA для backend-report
-
+  image: sausage-backend-report:0.1.0
+  replicas: 1
+  revisionHistoryLimit: 3
+  containerPort: 8080
+  service:
+    port: 8080
+  strategy:
+    type: Recreate
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  hpa:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 2
+    targetCPUUtilizationPercentage: 75
 infra:
   postgresql:
     enabled: true
@@ -74,13 +94,11 @@ infra:
     auth:
       database: sausage-store
       username: store
-      # Default: provision global.postgresqlSecretName externally.
       createSecret: false
-      password: ""
+      password: ''
     persistence:
       size: 1Gi
-      # Empty means use the cluster default StorageClass.
-      storageClass: ""
+      storageClass: ''
     resources:
       requests:
         cpu: 100m
@@ -89,7 +107,21 @@ infra:
         cpu: 500m
         memory: 256Mi
   mongodb:
-    env:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+    image: mongo:7.0.14
+    replicas: 1
     containerPort: 27017
+    auth:
+      username: root
+      database: sausage-store
+      createSecret: false
+      password: ''
+    persistence:
+      size: 1Gi
+      storageClass: ''
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi

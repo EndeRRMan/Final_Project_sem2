@@ -1,0 +1,3 @@
+Application images and database credentials must be supplied before deployment.
+See sausage-store-chart/README.md for Secret contracts and resource budgets.
+The existing TLS Secret is referenced; this chart does not create it.

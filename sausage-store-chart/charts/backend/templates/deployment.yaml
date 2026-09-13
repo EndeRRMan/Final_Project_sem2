@@ -34,6 +34,8 @@ spec:
           image: {{ .Values.image }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           env:
+            - name: SPRING_CLOUD_VAULT_ENABLED
+              value: {{ .Values.env.vaultEnabled | quote }}
             - name: SPRING_DATASOURCE_URL
               valueFrom:
                 configMapKeyRef:
@@ -49,6 +51,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.global.postgresqlSecretName | quote }}
                   key: password
+            - name: SPRING_DATA_MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.mongodbSecretName | quote }}
+                  key: uri
             - name: REPORT_PATH
               valueFrom:
                 configMapKeyRef:
@@ -77,19 +84,3 @@ spec:
               path: report_path
             - key: log_path
               path: log_path
-{{- if .Values.vpa }}
----
-apiVersion: autoscaling.k8s.io/v1
-kind: VerticalPodAutoscaler
-metadata:
-  name: {{ .Release.Name }}-{{ .Chart.Name }}-vpa
-spec:
-  targetRef:
-    apiVersion: "apps/v1"
-    kind: Deployment
-    name: {{ .Release.Name }}-{{ .Chart.Name }}
-  updatePolicy:
-{{ toYaml .Values.vpa.updatePolicy | indent 4 }} 
-  resourcePolicy:
-{{ toYaml .Values.vpa.resourcePolicy | indent 4 }}
-{{- end }}
